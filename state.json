@@ -1,6 +1,6 @@
 {
-  "mode": "off",
+  "mode": "on",
   "seq": 14,
-  "updated_utc": "2026-11-02T04:01:21Z",
-  "by": "cleanup"
+  "updated_utc": "2026-11-02T03:58:00Z",
+  "by": "github-actions:on"
 }
