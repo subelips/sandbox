@@ -1,6 +1,6 @@
 {
-  "mode": "off",
-  "seq": 11,
-  "updated_utc": "2026-11-02T03:46:02Z",
-  "by": "bootstrap"
+  "mode": "on",
+  "seq": 12,
+  "updated_utc": "2026-11-02T03:48:13Z",
+  "by": "github-actions:on"
 }
