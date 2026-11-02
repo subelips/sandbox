@@ -1,7 +1,7 @@
 {
-  "mode": "off",
-  "seq": 5,
-  "updated_utc": "2026-11-02T03:23:11Z",
-  "by": "e2e-test",
+  "mode": "on",
+  "seq": 6,
+  "updated_utc": "2026-11-02T03:29:50Z",
+  "by": "github-actions:on",
   "note": "mode=on -> sandbox keeps running. mode=off -> sandbox exits by itself."
 }
