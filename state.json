@@ -1,7 +1,7 @@
 {
-  "mode": "off",
-  "seq": 3,
-  "updated_utc": "2026-11-02T02:47:58Z",
-  "by": "test",
+  "mode": "on",
+  "seq": 4,
+  "updated_utc": "2026-11-02T02:59:31Z",
+  "by": "manual-test",
   "note": "mode=on -> sandbox keeps running. mode=off -> sandbox exits by itself."
 }
