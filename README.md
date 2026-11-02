@@ -78,7 +78,7 @@ Host key được giữ trong `.pkg` nên chỉ phải *Accept* một lần.
 | Kaggle cấp máy + mount dataset | ~60–90s (phía Kaggle) | ~60–90s |
 | `zstd -dc .pkg \| tar -x` | 27,7s | **15,0s** |
 | `hermes --version` | 7,5s | 6,3s |
-| restore state mã hoá | 1,0s | 1,3s |
+| config.yaml từ dataset | ~0,1s | ~0,1s |
 | sshd + kiểm tra banner | 3,5s | 3,1s |
 | tunnel + kiểm tra end-to-end | 0,4s | 6,1s |
 | **READY** | **42s** | **32s** |
@@ -91,11 +91,12 @@ treo im lặng — và báo Telegram.
 
 - `sandbox-secrets` **private** và **không mã hoá** — đúng yêu cầu, và đó là lý do
   nó buộc phải private. Đổi sang public = mất toàn bộ token.
-- State lâu dài (memory, skills, sessions, config, state.db) được **mã hoá
-  AES-256-CBC / PBKDF2 200.000 vòng** rồi mới đẩy lên branch `state`
-  (`backups/hermes-state.tar.gz.enc`, ~946 kB). Chỉ một bản ghi đè, không phình history.
+- **Cấu hình nằm trong dataset**, không nằm trong sandbox: mỗi boot đều copy
+  `hermes-config.yaml` từ dataset đè lên `~/.hermes/config.yaml` (129 kB, bản đầy đủ
+  do installer sinh ra). Không lần boot nào phải `hermes setup` lại.
+  Sửa cấu hình thì sửa file trong dataset, hoặc SSH vào rồi chạy `hermes-save-config`.
 - `state.json` trên `main` là công khai — chỉ chứa `mode`/`seq`, không có bí mật.
-- Không SSH key, không GitHub secret cho bí mật của sandbox.
+- Không SSH key, không GitHub secret cho bí mật của sandbox, **không backup, không branch phụ**.
 
 ## 7. Giới hạn thật — đọc trước khi dùng
 
@@ -115,6 +116,9 @@ treo im lặng — và báo Telegram.
 ## 8. Vận hành & sửa lỗi
 
 ```bash
+# trong sandbox: lưu cấu hình đang chạy ngược lại dataset (boot sau giữ nguyên)
+hermes-save-config
+
 # sinh lại notebook từ script (đừng sửa kernel/sandbox.ipynb bằng tay)
 python3 scripts/sync_kernel.py
 
@@ -131,6 +135,7 @@ python3 scripts/state.py set off && git commit -am "off" && git push
 | Boot fail: *public endpoint not answering* | cổng `19326` đang bị một phiên Pinggy khác giữ | đóng phiên cũ, chỉ 1 tunnel cùng lúc |
 | Boot fail: *sshd not answering* | image đổi cấu trúc sshd | xem `/root/.hermes/logs/sshd.log` |
 | `off` xong mà kernel vẫn chạy | `state.json` không đọc được | log kernel in `api state read failed` |
+| Sửa config mà boot sau mất | sửa trong sandbox rồi quên lưu | chạy `hermes-save-config` |
 | Log kernel | `kaggle kernels logs maithanhtu/hermes-sandbox` | |
 
 **Bài học đã trả giá:** `raw.githubusercontent.com` nằm sau CDN, đã trả về bản

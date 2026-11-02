@@ -10,10 +10,10 @@ BOOT = r'''
 # ═══════════════════════════════════════════════════════════════════════════
 #  KAGGLE SANDBOX - BOOT (Hermes Agent + OpenSSH + Pinggy TCP)
 #  Full agent tree from the .pkg dataset. Nothing skipped, nothing rebuilt.
-#  Every stage prints a marker; any failure raises on the spot so the run
-#  ends in ERROR with the real reason instead of hanging silently.
+#  Config + credentials come from the private secrets dataset, so no boot ever
+#  needs reconfiguring. No backup, no extra branch, no SSH key.
 # ═══════════════════════════════════════════════════════════════════════════
-import json, os, pathlib, shutil, socket, subprocess, sys, threading, time
+import base64, json, os, pathlib, shutil, socket, subprocess, sys, threading, time
 import urllib.parse, urllib.request
 
 T0 = time.time()
@@ -26,19 +26,33 @@ def sh(c, timeout=600, check=False):
     return r
 
 IN = pathlib.Path("/kaggle/input")
-def need(name):
+def find(name, required=True):
     for p in IN.rglob(name):
         return p
-    raise SystemExit(f"FATAL: {name} not mounted under /kaggle/input")
+    if required:
+        raise SystemExit(f"FATAL: {name} not mounted under /kaggle/input")
+    return None
 
-SEC = json.loads(need("secrets.json").read_text())
+SEC = json.loads(find("secrets.json").read_text())
 PINGGY, TG, SSH, GH = SEC["pinggy"], SEC["telegram"], SEC["ssh"], SEC["github"]
 LLM = SEC.get("llm") or {}
 HH = pathlib.Path("/root/.hermes")
 LOGSD = HH / "logs"
 LOGSD.mkdir(parents=True, exist_ok=True)
+API = "https://api.github.com"
 PUBLIC_STATE = f"https://raw.githubusercontent.com/{GH['repo']}/main/state.json"
 KERNEL = os.environ.get("KAGGLE_KERNEL_RUN_TYPE", "?")
+
+def gh(path, method="GET", body=None):
+    req = urllib.request.Request(API + path, method=method,
+        data=json.dumps(body).encode() if body else None,
+        headers={"Authorization": f"token {GH['token']}",
+                 "Accept": "application/vnd.github+json",
+                 "Content-Type": "application/json",
+                 "User-Agent": "kaggle-sandbox"})
+    with urllib.request.urlopen(req, timeout=40) as r:
+        raw = r.read()
+    return json.loads(raw) if raw else {}
 
 def tg(text, silent=True):
     if not TG.get("bot_token"):
@@ -79,7 +93,7 @@ log(f"secrets loaded · kernel={KERNEL} · python={sys.version.split()[0]}")
 
 EXTRACT = r'''
 # ── 1. full agent tree from the .pkg dataset (no reinstall, no network) ─────
-pkg = need("hermes-agent-full.pkg")
+pkg = find("hermes-agent-full.pkg")
 log(f"pkg: {pkg} ({pkg.stat().st_size/1e6:.0f} MB)")
 
 z = None
@@ -114,88 +128,22 @@ os.environ["PATH"] = "/root/.local/bin:/usr/local/bin:" + os.environ.get("PATH",
 log("hermes: " + sh("/root/.local/bin/hermes --version 2>&1 | head -1", timeout=240).stdout.strip())
 '''
 
-STATE = r'''
-# ── 2. durable state: encrypted backup on branch `state` ──────────────────
-import base64
-
-API = "https://api.github.com"
-BR = SEC["backup"]["branch"]
-BF = SEC["backup"]["file"]
-KEY = pathlib.Path("/root/.backup.key")
-KEY.write_text(SEC["backup"]["key"]); os.chmod(KEY, 0o600)
-
-def gh(path, method="GET", body=None):
-    req = urllib.request.Request(API + path, method=method,
-        data=json.dumps(body).encode() if body else None,
-        headers={"Authorization": f"token {GH['token']}",
-                 "Accept": "application/vnd.github+json",
-                 "Content-Type": "application/json",
-                 "User-Agent": "kaggle-sandbox"})
-    with urllib.request.urlopen(req, timeout=40) as r:
-        raw = r.read()
-    return json.loads(raw) if raw else {}
-
-def ensure_branch():
-    try:
-        gh(f"/repos/{GH['repo']}/branches/{BR}"); return
-    except Exception:
-        pass
-    sha = gh(f"/repos/{GH['repo']}/git/ref/heads/{GH['branch']}")["object"]["sha"]
-    try:
-        gh(f"/repos/{GH['repo']}/git/refs", "POST", {"ref": f"refs/heads/{BR}", "sha": sha})
-    except Exception:
-        pass
-
-def crypt(data, decrypt=False):
-    args = ["openssl", "enc"] + (["-d"] if decrypt else []) + [
-        "-aes-256-cbc", "-pbkdf2", "-iter", "200000", "-salt",
-        "-in", "/dev/stdin", "-pass", f"file:{KEY}"]
-    r = subprocess.run(args, input=data, capture_output=True)
-    if r.returncode:
-        raise RuntimeError(r.stderr.decode(errors="replace")[-300:])
-    return r.stdout
-
-def restore():
-    try:
-        blob = base64.b64decode(gh(f"/repos/{GH['repo']}/contents/{BF}?ref={BR}")["content"])
-    except Exception as e:
-        log(f"restore: no previous state ({str(e)[:70]})"); return
-    try:
-        out = subprocess.run(["tar", "-C", str(HH), "-xzf", "-"], input=crypt(blob, True), capture_output=True)
-        log(f"restore: {len(blob)/1e3:.0f} kB -> rc={out.returncode}")
-    except Exception as e:
-        log(f"restore: skipped ({str(e)[:120]})")
-
-def backup():
-    items = [p for p in ("memories", "skills", "sessions", "config.yaml", "auth.json", "state.db")
-             if (HH / p).exists()]
-    if not items:
-        return
-    tar = subprocess.run(["tar", "-C", str(HH), "-czf", "-", *items], capture_output=True)
-    if not tar.stdout or len(tar.stdout) > 12_000_000:
-        log(f"backup: skipped ({len(tar.stdout)} B)"); return
-    enc = crypt(tar.stdout)
-    body = {"message": f"state backup {time.strftime('%FT%TZ', time.gmtime())}",
-            "content": base64.b64encode(enc).decode(), "branch": BR}
-    try:
-        body["sha"] = gh(f"/repos/{GH['repo']}/contents/{BF}?ref={BR}")["sha"]
-    except Exception:
-        ensure_branch()
-    try:
-        gh(f"/repos/{GH['repo']}/contents/{BF}", "PUT", body)
-        log(f"backup: {len(enc)/1e3:.0f} kB encrypted -> {BR}:{BF}")
-    except Exception as e:
-        log(f"backup: failed ({str(e)[:150]})")
-
-restore()
-'''
-
 CONFIG = r'''
-# ── 3. credentials straight from the private secrets dataset ───────────────
+# ── 2. config + credentials, straight from the private secrets dataset ─────
+# The dataset is the single source of truth: config.yaml there always wins.
+cfg_src = find("hermes-config.yaml", required=False)
+if cfg_src:
+    shutil.copy(cfg_src, HH / "config.yaml")
+    os.chmod(HH / "config.yaml", 0o644)
+    log(f"config.yaml <- dataset ({cfg_src.stat().st_size} B) · nothing to configure")
+else:
+    log("config.yaml: dataset has no hermes-config.yaml, keeping the installer's")
+
 env_lines = [
     "# rewritten at every boot from the private Kaggle secrets dataset",
     f"KAGGLE_USERNAME={SEC['kaggle']['username']}",
     f"KAGGLE_API_TOKEN={SEC['kaggle']['api_token']}",
+    f"KAGGLE_DATASET={SEC['kaggle'].get('secrets_dataset', '')}",
     f"GITHUB_TOKEN={GH['token']}",
     f"PINGGY_TOKEN={PINGGY['token']}",
     f"TELEGRAM_BOT_TOKEN={TG['bot_token']}",
@@ -206,24 +154,35 @@ if LLM.get("api_key"):
 (HH / ".env").write_text("\n".join(env_lines) + "\n")
 os.chmod(HH / ".env", 0o600)
 
-cfg = HH / "config.yaml"
-if not cfg.exists():
-    cfg.write_text(
-        "# first boot - sửa thoải mái, cấu hình này nằm trong backup mã hoá\n"
-        "display:\n  interface: cli\n"
-        f"model:\n  provider: {LLM.get('provider', 'openrouter')}\n"
-        f"  name: {LLM.get('model', 'anthropic/claude-sonnet-4.5')}\n"
-        "tools:\n  approval_mode: auto\n")
 # make `hermes` reachable from every session (login shell, exec_command, cron)
 pathlib.Path("/usr/local/bin/hermes").write_text("#!/bin/sh\nexec /root/.local/bin/hermes \"$@\"\n")
 os.chmod("/usr/local/bin/hermes", 0o755)
 pathlib.Path("/etc/profile.d/10-sandbox.sh").write_text("export PATH=/root/.local/bin:$PATH\n")
 os.chmod("/etc/profile.d/10-sandbox.sh", 0o644)
-log("credentials -> ~/.hermes/.env · hermes on PATH everywhere")
+
+# push live config changes back into the dataset, so the next boot keeps them
+SAVE_SH = """#!/bin/sh
+# hermes-save-config - day ~/.hermes/config.yaml hien tai vao dataset secret
+set -eu
+. /root/.hermes/.env
+D=$(mktemp -d)
+if ! python3 -c 'import kaggle' 2>/dev/null; then
+  pip install -q kaggle six python-dateutil tqdm >/dev/null 2>&1 || true
+fi
+python3 -m kaggle datasets download -d "$KAGGLE_DATASET" -p "$D" --unzip -q
+cp /root/.hermes/config.yaml "$D/hermes-config.yaml"
+printf '{"title":"sandbox secrets","id":"%s","licenses":[{"name":"CC0-1.0"}]}' "$KAGGLE_DATASET" > "$D/dataset-metadata.json"
+python3 -m kaggle datasets version -p "$D" -m "config $(date -u +%FT%TZ)" -r zip -q
+echo "config saved -> $KAGGLE_DATASET"
+"""
+save = pathlib.Path("/usr/local/bin/hermes-save-config")
+save.write_text(SAVE_SH)
+os.chmod(save, 0o755)
+log("credentials -> ~/.hermes/.env · hermes on PATH · hermes-save-config ready")
 '''
 
 SSHD = r'''
-# ── 4. OpenSSH server, password auth, no SSH key anywhere ─────────────────
+# ── 3. OpenSSH server, password auth, no SSH key anywhere ─────────────────
 # The image ships its own sshd config (127.0.0.1:2222) and we must not fight
 # it or kill it, so this runs a SECOND, fully self-contained sshd on :22 with
 # its own config file, its own host keys and its own pid file.
@@ -234,7 +193,7 @@ for kind in ("ed25519", "rsa"):
     if not priv.exists():
         bits = "-t rsa -b 3072" if kind == "rsa" else "-t ed25519"
         sh(f"ssh-keygen -q {bits} -N '' -f {priv}", timeout=180, check=True)
-    # keep the same host identity for /etc/ssh too, so Termius never re-prompts
+    # keep the same host identity in /etc/ssh too, so Termius never re-prompts
     shutil.copy(priv, f"/etc/ssh/ssh_host_{kind}")
     shutil.copy(str(priv) + ".pub", f"/etc/ssh/ssh_host_{kind}.pub")
     os.chmod(f"/etc/ssh/ssh_host_{kind}", 0o600)
@@ -291,10 +250,10 @@ banner = local_ssh_banner()
 if not banner:
     die("sshd not answering on 127.0.0.1:22 (rc=" + str(started.returncode) + ") " + started.stderr[-500:])
 log(f"sshd up on 0.0.0.0:22: {banner}")
- '''
+'''
 
 TUNNEL = r'''
-# ── 5. Pinggy Pro TCP tunnel: fixed host, fixed port ──────────────────────
+# ── 4. Pinggy Pro TCP tunnel: fixed host, fixed port ──────────────────────
 TUN = pathlib.Path("/root/bin/tunnel.sh")
 TUN.parent.mkdir(parents=True, exist_ok=True)
 TUN.write_text(f"""#!/usr/bin/env bash
@@ -334,7 +293,7 @@ log(f"public tunnel live in {time.time()-t:.0f}s: {pub}")
 '''
 
 RUN = r'''
-# ── 6. announce + control loop (this keeps the kernel alive) ──────────────
+# ── 5. announce + control loop (this keeps the kernel alive) ──────────────
 boot = time.time() - T0
 WD.cancel()
 ver = sh("/root/.local/bin/hermes --version 2>&1 | head -1").stdout.strip()
@@ -360,7 +319,6 @@ def read_mode():
                                  headers={"Cache-Control": "no-cache", "User-Agent": "sandbox"})
     return json.loads(urllib.request.urlopen(req, timeout=15).read()).get("mode", "on")
 
-last_bk = time.time()
 fail = 0
 while True:
     time.sleep(15)
@@ -375,18 +333,15 @@ while True:
         continue
     if mode != "on":
         log(f"state.json mode={mode} -> shutting down")
-        backup()
         break
-    if time.time() - last_bk > 900:
-        backup(); last_bk = time.time()
 
 tg("🔴 <b>SANDBOX STOPPED</b>\nKernel tự thoát theo cờ <code>state.json</code>.", silent=False)
 log("control loop finished - kernel completes now")
 '''
 
 CELLS = [
-    ("boot", BOOT), ("extract", EXTRACT), ("state", STATE),
-    ("config", CONFIG), ("sshd", SSHD), ("tunnel", TUNNEL), ("run", RUN),
+    ("boot", BOOT), ("extract", EXTRACT), ("config", CONFIG),
+    ("sshd", SSHD), ("tunnel", TUNNEL), ("run", RUN),
 ]
 
 nb = {
@@ -398,7 +353,7 @@ nb = {
             "Sinh tự động bởi `scripts/sync_kernel.py` từ repo `subelips/sandbox`.\n",
             "Đừng sửa tay: lần `kaggle kernels push` sau sẽ ghi đè.\n",
             "\n",
-            "`secrets.json` ← dataset `maithanhtu/sandbox-secrets` (private, plaintext).\n",
+            "`secrets.json` + `hermes-config.yaml` ← dataset `maithanhtu/sandbox-secrets` (private).\n",
             "`hermes-agent-full.pkg` ← dataset `maithanhtu/hermes-agent-pkg` (tar+zstd, bản cài đầy đủ).\n",
         ]}],
     "metadata": {
