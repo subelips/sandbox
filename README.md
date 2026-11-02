@@ -16,7 +16,7 @@ thông báo qua **Telegram bot** (bot chỉ gửi, không nhận lệnh).
         └── tunnel ──► pinggy.io ◄──┘
                                     │
    Telegram  ◄──── READY / STOPPED ─┘        state.json ◄── workflow_dispatch on|off
-   (chỉ nhận)                                 backup (mã hoá) ──► branch `state`
+   (chỉ nhận)                                 config ◄── dataset `sandbox-secrets`
 ```
 
 ## 1. Thành phần
@@ -41,7 +41,7 @@ Nội dung `.pkg`: 2.84 GB / 94.044 file — `hermes-agent` (git checkout đầy
 1. **GitHub secret duy nhất:** `KAGGLE_API_TOKEN`
    (`Settings → Secrets and variables → Actions → New repository secret`).
    Đây là chỗ duy nhất GitHub giữ bí mật, vì Action buộc phải xác thực với Kaggle
-   trước khi làm gì. Mọi bí mật khác (Pinggy, Telegram, SSH password, PAT, backup key)
+   trước khi làm gì. Mọi bí mật khác (Pinggy, Telegram, SSH password, PAT, config)
    **đọc từ dataset `sandbox-secrets`** lúc chạy — không nằm trong GitHub.
 2. Bật Actions (`Actions → I understand my workflows, go ahead`).
 3. Chạy workflow **sandbox** với `action = on`.
@@ -111,7 +111,7 @@ treo im lặng — và báo Telegram.
    được Kaggle hỗ trợ.
 5. **Chưa có API key LLM.** `secrets.json → llm` đang rỗng. Thêm
    `{"provider": "...", "model": "...", "api_key": "...", "env_var": "..."}` rồi chạy
-   `on` lại, hoặc SSH vào chạy `hermes setup` một lần (cấu hình được giữ trong backup).
+   `on` lại, hoặc thêm `llm` vào dataset rồi chạy `hermes-save-config` sau khi `hermes setup`.
 
 ## 8. Vận hành & sửa lỗi
 
