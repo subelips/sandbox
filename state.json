@@ -1,0 +1,7 @@
+{
+  "mode": "off",
+  "seq": 1,
+  "updated_utc": "2026-11-02T00:00:00Z",
+  "by": "bootstrap",
+  "note": "mode=on -> sandbox keeps running. mode=off -> sandbox exits by itself."
+}

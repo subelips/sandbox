@@ -1,0 +1,144 @@
+name: sandbox
+
+# ONE workflow only. It both STARTS and STOPS the sandbox - there is no second
+# workflow file anywhere in this repo. Do not split it.
+#
+#   on     -> flip state.json to "on", then push the Kaggle kernel (starts it)
+#   off    -> flip state.json to "off"; the running kernel reads that flag and
+#             exits by itself (Kaggle has no public "cancel run" API)
+#   status -> read-only report
+#
+# The only GitHub secret required is KAGGLE_API_TOKEN. Every other credential
+# (Pinggy, Telegram, SSH password, PAT, backup key) is read at runtime from the
+# private Kaggle dataset below - never from GitHub secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "on = bật sandbox / off = tắt sandbox / status = kiểm tra"
+        required: true
+        default: "on"
+        type: choice
+        options:
+          - "on"
+          - "off"
+          - "status"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sandbox-control
+  cancel-in-progress: false
+
+env:
+  KERNEL_REF: maithanhtu/hermes-sandbox
+  SECRETS_DATASET: maithanhtu/sandbox-secrets
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Kaggle CLI
+        run: python -m pip install --quiet --upgrade kaggle
+
+      - name: Load secrets from the Kaggle dataset
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          KAGGLE_USERNAME: maithanhtu
+        run: |
+          set -euo pipefail
+          python -m kaggle datasets download -d "$SECRETS_DATASET" -p ./.secret --unzip --quiet
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json, pathlib
+          s = json.loads(pathlib.Path(".secret/secrets.json").read_text())
+          print(f"TELEGRAM_BOT_TOKEN={s['telegram']['bot_token']}")
+          print(f"TELEGRAM_CHAT_ID={s['telegram']['chat_id']}")
+          print(f"SSH_HOST={s['pinggy']['host']}")
+          print(f"SSH_PORT={s['pinggy']['port']}")
+          PY
+          rm -rf ./.secret
+          while IFS= read -r line; do
+            [ -n "${line#*=}" ] && echo "::add-mask::${line#*=}"
+          done <<< "$(env | grep -E '^(TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID)=')"
+
+      - name: Act
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          KAGGLE_USERNAME: maithanhtu
+          ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+          git config user.name  "sandbox-bot"
+          git config user.email "sandbox-bot@users.noreply.github.com"
+
+          status_now() {
+            python -m kaggle kernels status "$KERNEL_REF" 2>/dev/null \
+              | grep -oE 'KernelWorkerStatus\.[A-Z_]+' | head -1 || echo UNKNOWN
+          }
+          publish_state() {
+            python scripts/state.py set "$1" "github-actions:$ACTION"
+            git add state.json
+            git commit -m "state: $1 (seq $(python scripts/state.py json | jq -r .seq))" || true
+            git push origin HEAD
+          }
+          notify() { python scripts/tg.py "$1" >/dev/null 2>&1 || true; }
+
+          STATE=$(python scripts/state.py get)
+          S=$(status_now)
+          echo "action=$ACTION state=$STATE kernel=$S"
+
+          case "$ACTION" in
+            status)
+              notify $'🔎 <b>Sandbox</b>\nstate.json: <code>'"$STATE"'</code>\nKaggle: <code>'"$S"'</code>'
+              ;;
+
+            on)
+              if [ "$S" = "RUNNING" ] || [ "$S" = "QUEUED" ]; then
+                notify $'🟡 <b>Sandbox đang chạy rồi</b>\n<code>ssh root@'"$SSH_HOST"' -p '"$SSH_PORT"'</code>'
+                exit 0
+              fi
+              publish_state on
+              python -m kaggle kernels push -p kernel
+              notify $'🚀 <b>Đang bật sandbox</b>\nKernel đã vào hàng đợi Kaggle.\nChờ tin nhắn <i>READY</i> (~2-4 phút).'
+              ;;
+
+            off)
+              if [ "$S" != "RUNNING" ] && [ "$S" != "QUEUED" ]; then
+                [ "$STATE" != "off" ] && publish_state off
+                notify $'⚪ <b>Sandbox đã tắt sẵn</b>\nKaggle: <code>'"$S"'</code>'
+                exit 0
+              fi
+              publish_state off
+              notify $'🛑 <b>Đang tắt sandbox</b>\nĐã gửi cờ dừng, kernel tự thoát trong ~60s.'
+              for i in $(seq 1 24); do
+                sleep 10
+                S=$(status_now)
+                case "$S" in
+                  RUNNING|QUEUED) ;;
+                  *)
+                    notify $'✅ <b>Sandbox đã tắt</b>\nKaggle: <code>'"$S"'</code>'
+                    exit 0
+                    ;;
+                esac
+              done
+              notify $'⚠️ <b>Kernel chưa thoát sau 4 phút</b>\nhttps://www.kaggle.com/code/'"$KERNEL_REF"'"'
+              ;;
+
+            *)
+              echo "unknown action: $ACTION" >&2
+              exit 1
+              ;;
+          esac

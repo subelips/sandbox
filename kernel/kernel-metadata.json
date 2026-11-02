@@ -1,0 +1,17 @@
+{
+ "id": "maithanhtu/hermes-sandbox",
+ "title": "hermes sandbox",
+ "code_file": "sandbox.ipynb",
+ "language": "python",
+ "kernel_type": "notebook",
+ "is_private": "true",
+ "enable_gpu": "false",
+ "enable_internet": "true",
+ "dataset_sources": [
+  "maithanhtu/sandbox-secrets",
+  "maithanhtu/hermes-agent-pkg"
+ ],
+ "competition_sources": [],
+ "kernel_sources": [],
+ "model_sources": []
+}
