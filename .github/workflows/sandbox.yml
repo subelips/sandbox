@@ -61,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m kaggle datasets download -d "$SECRETS_DATASET" -p ./.secret --unzip --quiet
-          python - <<'PY' >> "$GITHUB_ENV"
+          python - <<'PY' > /tmp/sandbox.env
           import json, pathlib
           s = json.loads(pathlib.Path(".secret/secrets.json").read_text())
           print(f"TELEGRAM_BOT_TOKEN={s['telegram']['bot_token']}")
@@ -70,9 +70,14 @@ jobs:
           print(f"SSH_PORT={s['pinggy']['port']}")
           PY
           rm -rf ./.secret
-          while IFS= read -r line; do
-            [ -n "${line#*=}" ] && echo "::add-mask::${line#*=}"
-          done <<< "$(env | grep -E '^(TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID)=')"
+          while IFS='=' read -r k v; do
+            if [ -n "${v:-}" ]; then
+              echo "::add-mask::$v"
+              echo "$k=$v" >> "$GITHUB_ENV"
+            fi
+          done < /tmp/sandbox.env
+          rm -f /tmp/sandbox.env
+          echo "secrets loaded from $SECRETS_DATASET"
 
       - name: Act
         env:
