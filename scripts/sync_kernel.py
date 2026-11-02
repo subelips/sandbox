@@ -214,7 +214,12 @@ if not cfg.exists():
         f"model:\n  provider: {LLM.get('provider', 'openrouter')}\n"
         f"  name: {LLM.get('model', 'anthropic/claude-sonnet-4.5')}\n"
         "tools:\n  approval_mode: auto\n")
-log("credentials -> ~/.hermes/.env")
+# make `hermes` reachable from every session (login shell, exec_command, cron)
+pathlib.Path("/usr/local/bin/hermes").write_text("#!/bin/sh\nexec /root/.local/bin/hermes \"$@\"\n")
+os.chmod("/usr/local/bin/hermes", 0o755)
+pathlib.Path("/etc/profile.d/10-sandbox.sh").write_text("export PATH=/root/.local/bin:$PATH\n")
+os.chmod("/etc/profile.d/10-sandbox.sh", 0o644)
+log("credentials -> ~/.hermes/.env · hermes on PATH everywhere")
 '''
 
 SSHD = r'''
