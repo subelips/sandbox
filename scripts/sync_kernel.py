@@ -52,6 +52,9 @@ EXTRACT = r'''
 # ── 1. full agent tree from the .pkg dataset (no reinstall, no network) ─────
 pkg = need("hermes-agent-full.pkg")
 log(f"pkg: {pkg}  {pkg.stat().st_size/1e6:.0f} MB")
+if not shutil.which("zstd"):
+    log("zstd missing -> apt-get install zstd")
+    sh("apt-get install -y -qq zstd || (apt-get update -qq && apt-get install -y -qq zstd)", timeout=300)
 t = time.time()
 ext = sh(f'tar -C / --zstd -xf "{pkg}"', timeout=900)
 if ext.returncode != 0:
@@ -219,6 +222,9 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 pw = SSH["password"].replace("'", "")
 sh(f"echo 'root:{pw}' | chpasswd", check=True)
 sh("chsh -s /bin/bash root", timeout=60)
+conf = sh("/usr/sbin/sshd -t -f /etc/ssh/sshd_config")
+if conf.returncode != 0:
+    raise SystemExit("FATAL: sshd config invalid\n" + conf.stderr[-800:])
 listen = sh("pgrep -x sshd >/dev/null && pkill -x sshd; sleep 1; /usr/sbin/sshd -f /etc/ssh/sshd_config")
 time.sleep(2)
 probe = sh("ss -ltn 2>/dev/null | grep -c ':22 ' || true")
