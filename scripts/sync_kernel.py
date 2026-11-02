@@ -342,20 +342,31 @@ tg(
 )
 log(f"READY in {boot:.0f}s")
 
+def read_mode():
+    """Control plane read: the API, then raw as a fallback.
+    raw.githubusercontent.com sits behind a CDN that served a 5-minute-stale
+    copy in testing, which is why the API is the primary source."""
+    try:
+        blob = base64.b64decode(gh(f"/repos/{GH['repo']}/contents/state.json?ref={GH['branch']}")["content"])
+        return json.loads(blob).get("mode", "on")
+    except Exception as e:
+        log(f"api state read failed: {str(e)[:80]}")
+    req = urllib.request.Request(f"{PUBLIC_STATE}?cb={int(time.time())}",
+                                 headers={"Cache-Control": "no-cache", "User-Agent": "sandbox"})
+    return json.loads(urllib.request.urlopen(req, timeout=15).read()).get("mode", "on")
+
 last_bk = time.time()
 fail = 0
 while True:
-    time.sleep(25)
+    time.sleep(15)
     try:
-        req = urllib.request.Request(f"{PUBLIC_STATE}?cb={int(time.time())}",
-                                     headers={"Cache-Control": "no-cache", "User-Agent": "sandbox"})
-        mode = json.loads(urllib.request.urlopen(req, timeout=15).read()).get("mode", "on")
+        mode = read_mode()
         fail = 0
     except Exception as e:
         fail += 1
-        log(f"state poll failed ({fail}): {e}")
-        if fail > 40:
-            log("state source unreachable for 17 min - keeping sandbox up"); fail = 0
+        log(f"state read failed ({fail}): {e}")
+        if fail > 60:
+            log("state source unreachable for 15 min - keeping sandbox up"); fail = 0
         continue
     if mode != "on":
         log(f"state.json mode={mode} -> shutting down")

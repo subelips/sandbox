@@ -90,8 +90,13 @@ jobs:
           git config user.email "sandbox-bot@users.noreply.github.com"
 
           status_now() {
-            python -m kaggle kernels status "$KERNEL_REF" 2>/dev/null \
-              | grep -oE 'KernelWorkerStatus\.[A-Z_]+' | head -1 || echo UNKNOWN
+            # never let a transient API error look like "stopped"
+            for _ in 1 2 3; do
+              s=$(python -m kaggle kernels status "$KERNEL_REF" 2>/dev/null | grep -oE 'KernelWorkerStatus\.[A-Z_]+' | head -1 || true)
+              [ -n "$s" ] && { echo "$s"; return 0; }
+              sleep 3
+            done
+            echo "UNKNOWN"
           }
           publish_state() {
             python scripts/state.py set "$1" "github-actions:$ACTION"
@@ -121,7 +126,7 @@ jobs:
               ;;
 
             off)
-              if [ "$S" != "RUNNING" ] && [ "$S" != "QUEUED" ]; then
+              if [ "$S" != "RUNNING" ] && [ "$S" != "QUEUED" ] && [ "$S" != "UNKNOWN" ]; then
                 [ "$STATE" != "off" ] && publish_state off
                 notify $'⚪ <b>Sandbox đã tắt sẵn</b>\nKaggle: <code>'"$S"'</code>'
                 exit 0
@@ -132,11 +137,11 @@ jobs:
                 sleep 10
                 S=$(status_now)
                 case "$S" in
-                  RUNNING|QUEUED) ;;
-                  *)
+                  COMPLETE|ERROR|CANCEL*)
                     notify $'✅ <b>Sandbox đã tắt</b>\nKaggle: <code>'"$S"'</code>'
                     exit 0
                     ;;
+                  *) : ;;
                 esac
               done
               notify $'⚠️ <b>Kernel chưa thoát sau 4 phút</b>\nhttps://www.kaggle.com/code/'"$KERNEL_REF"'"'
