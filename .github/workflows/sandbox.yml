@@ -52,7 +52,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install Kaggle CLI
-        run: python -m pip install --quiet --upgrade kaggle
+        run: python -m pip install --quiet --upgrade kaggle six python-dateutil tqdm requests
 
       - name: Load secrets from the Kaggle dataset
         env:
