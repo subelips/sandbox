@@ -52,17 +52,29 @@ EXTRACT = r'''
 # ── 1. full agent tree from the .pkg dataset (no reinstall, no network) ─────
 pkg = need("hermes-agent-full.pkg")
 log(f"pkg: {pkg}  {pkg.stat().st_size/1e6:.0f} MB")
-if not shutil.which("zstd"):
-    log("zstd missing -> apt-get install zstd")
+
+# the dataset ships its own zstd so boot never needs apt or a download
+z = None
+zb = pkg.parent / "zstd"
+if zb.exists():
+    pathlib.Path("/root/bin").mkdir(parents=True, exist_ok=True)
+    shutil.copy(zb, "/root/bin/zstd"); os.chmod("/root/bin/zstd", 0o755)
+    if sh("/root/bin/zstd --version", timeout=30).returncode == 0:
+        z = "/root/bin/zstd"
+        log("using bundled zstd " + sh("/root/bin/zstd --version").stdout.strip().split()[0])
+if not z and shutil.which("zstd"):
+    z = "zstd"
+if not z:
+    log("no zstd available -> apt-get install")
     sh("apt-get install -y -qq zstd || (apt-get update -qq && apt-get install -y -qq zstd)", timeout=300)
+    z = "/usr/bin/zstd" if os.path.exists("/usr/bin/zstd") else None
+
 t = time.time()
-ext = sh(f'tar -C / --zstd -xf "{pkg}"', timeout=900)
-if ext.returncode != 0:
-    log("tar --zstd unavailable, falling back to zstd pipe")
-    ext = sh(f'zstd -dc "{pkg}" | tar -C / -xf -', timeout=900)
-if ext.returncode != 0:
-    log("falling back to gzip")
-    ext = sh(f'gzip -dc "{pkg}" | tar -C / -xf -', timeout=900)
+if z:
+    ext = sh(f'"{z}" -dc "{pkg}" | tar -C / -xf -', timeout=1200)
+else:
+    log("last resort: gzip")
+    ext = sh(f'gzip -dc "{pkg}" | tar -C / -xf -', timeout=1200)
 if ext.returncode != 0:
     raise SystemExit("FATAL: cannot extract .pkg\n" + ext.stderr[-1500:])
 log(f"extracted in {time.time()-t:.1f}s")
@@ -73,7 +85,7 @@ if not HERMES_BIN.exists():
 os.chmod(HERMES_BIN, 0o755)
 os.environ["PATH"] = "/root/.local/bin:/usr/local/bin:" + os.environ.get("PATH", "")
 log("hermes: " + sh("/root/.local/bin/hermes --version 2>&1 | tail -1", timeout=180).stdout.strip())
-'''
+ '''
 
 RESTORE = r'''
 # ── 1b. persistent agent state: encrypted backup on branch `state` ─────────
