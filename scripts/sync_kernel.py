@@ -165,14 +165,17 @@ SAVE_SH = """#!/bin/sh
 # hermes-save-config - day ~/.hermes/config.yaml hien tai vao dataset secret
 set -eu
 . /root/.hermes/.env
+export KAGGLE_API_TOKEN
+mkdir -p /root/.kaggle
+umask 077
+printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_API_TOKEN" > /root/.kaggle/kaggle.json
+printf '%s' "$KAGGLE_API_TOKEN" > /root/.kaggle/access_token
 D=$(mktemp -d)
-if ! python3 -c 'import kaggle' 2>/dev/null; then
-  pip install -q kaggle six python-dateutil tqdm >/dev/null 2>&1 || true
-fi
-python3 -m kaggle datasets download -d "$KAGGLE_DATASET" -p "$D" --unzip -q
+kaggle datasets download -d "$KAGGLE_DATASET" -p "$D" --unzip
 cp /root/.hermes/config.yaml "$D/hermes-config.yaml"
 printf '{"title":"sandbox secrets","id":"%s","licenses":[{"name":"CC0-1.0"}]}' "$KAGGLE_DATASET" > "$D/dataset-metadata.json"
-python3 -m kaggle datasets version -p "$D" -m "config $(date -u +%FT%TZ)" -r zip -q
+kaggle datasets version -p "$D" -m "config $(date -u +%FT%TZ)" -r zip \
+  || kaggle datasets version -p "$D" -m "config $(date -u +%FT%TZ)"
 echo "config saved -> $KAGGLE_DATASET"
 """
 save = pathlib.Path("/usr/local/bin/hermes-save-config")
