@@ -8,6 +8,7 @@ on:
         required: true
         type: choice
         options:
+          - SETUP_DATASETS
           - START
           - STOP
 
@@ -21,7 +22,7 @@ concurrency:
 jobs:
   control:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,26 +36,16 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
           set -euo pipefail
-          test -n "$NTFY_TOPIC" || { echo "Missing Actions Secret NTFY_TOPIC"; exit 1; }
-          if [ "$ACTION" = "START" ]; then
+          if [ "$ACTION" = "SETUP_DATASETS" ] || [ "$ACTION" = "START" ]; then
             test -n "$KAGGLE_USERNAME" || { echo "Missing Actions Secret KAGGLE_USERNAME"; exit 1; }
             test -n "$KAGGLE_KEY" || { echo "Missing Actions Secret KAGGLE_KEY"; exit 1; }
           fi
-
-      - name: Send cooperative STOP signal
-        if: ${{ inputs.action == 'STOP' }}
-        env:
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-        run: |
-          set -euo pipefail
-          curl --fail --silent --show-error --max-time 20 \
-            -H "Content-Type: text/plain" \
-            --data-binary "STOP" \
-            "https://ntfy.sh/${NTFY_TOPIC}"
-          echo "STOP signal published. Kaggle will exit when its polling loop receives it."
+          if [ "$ACTION" = "START" ] || [ "$ACTION" = "STOP" ]; then
+            test -n "$NTFY_TOPIC" || { echo "Missing Actions Secret NTFY_TOPIC"; exit 1; }
+          fi
 
       - name: Configure Kaggle credentials
-        if: ${{ inputs.action == 'START' }}
+        if: ${{ inputs.action != 'STOP' }}
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
@@ -70,6 +61,50 @@ jobs:
           os.chmod(path, 0o600)
           PY
           python -m pip install --quiet --upgrade kaggle
+
+      - name: Create or update the three private Datasets
+        if: ${{ inputs.action == 'SETUP_DATASETS' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish_dataset() {
+            local folder="$1"
+            local dataset_id="$2"
+            local note="$3"
+            echo "Publishing $dataset_id from $folder"
+            if kaggle datasets status "$dataset_id" >/dev/null 2>&1; then
+              kaggle datasets version -p "$folder" -m "$note" -q -t -r zip
+            else
+              # Kaggle Datasets are private by default; do not pass --public.
+              kaggle datasets create -p "$folder" -q -t -r zip
+            fi
+            kaggle datasets status "$dataset_id"
+          }
+          publish_dataset datasets/package-cache maithanhtu/sandbox-package-cache "Initialize private package cache"
+          publish_dataset datasets/secret-store maithanhtu/sandbox-secret-store "Initialize private secret store seed"
+          publish_dataset datasets/runtime maithanhtu/sandbox-runtime "Initialize private Hermes runtime seed"
+          echo "All three Datasets have been created or updated as private Datasets."
+
+      - name: Send cooperative STOP signal
+        if: ${{ inputs.action == 'STOP' }}
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 20 \
+            -H "Content-Type: text/plain" \
+            --data-binary "STOP" \
+            "https://ntfy.sh/${NTFY_TOPIC}"
+          echo "STOP signal published. Kaggle will exit when its polling loop receives it."
+
+      - name: Verify all Dataset attachments exist
+        if: ${{ inputs.action == 'START' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          kaggle datasets status maithanhtu/sandbox-package-cache
+          kaggle datasets status maithanhtu/sandbox-secret-store
+          kaggle datasets status maithanhtu/sandbox-runtime
 
       - name: Push and start Kaggle kernel
         if: ${{ inputs.action == 'START' }}
