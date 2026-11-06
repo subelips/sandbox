@@ -14,11 +14,11 @@ from pathlib import Path
 
 RUNTIME_DATASET_DIR = Path(os.environ.get("RUNTIME_DATASET_DIR", "/kaggle/input/hermes-runtime"))
 RUNTIME_BUNDLE = RUNTIME_DATASET_DIR / "hermes-runtime.tar.gz"
-SECRET_CONFIG_DIR = SECRET_DATASET_DIR / "hermes-config"
 
 SECRET_DATASET_DIR = Path(os.environ.get(
     "SECRET_DATASET_DIR", "/kaggle/input/hermes-secret-store"
 ))
+SECRET_CONFIG_DIR = SECRET_DATASET_DIR / "hermes-config"
 SECRET_FILE = Path(os.environ.get(
     "SECRET_FILE", str(SECRET_DATASET_DIR / "secrets.json")
 ))
