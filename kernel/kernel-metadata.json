@@ -10,7 +10,8 @@
   "machine_shape": "",
   "dataset_sources": [
     "maithanhtu/hermes-package-cache",
-    "maithanhtu/hermes-secret-store"
+    "maithanhtu/hermes-secret-store",
+    "maithanhtu/hermes-runtime"
   ],
   "competition_sources": [],
   "kernel_sources": [],
