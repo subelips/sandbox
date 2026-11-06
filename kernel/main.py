@@ -4,6 +4,7 @@ import json
 import os
 import pwd
 import shutil
+import tarfile
 import subprocess
 import sys
 import time
@@ -12,7 +13,8 @@ import urllib.request
 from pathlib import Path
 
 RUNTIME_DATASET_DIR = Path(os.environ.get("RUNTIME_DATASET_DIR", "/kaggle/input/hermes-runtime"))
-RUNTIME_HOME_DIR = RUNTIME_DATASET_DIR / "hermes"
+RUNTIME_BUNDLE = RUNTIME_DATASET_DIR / "hermes-runtime.tar.gz"
+SECRET_CONFIG_DIR = SECRET_DATASET_DIR / "hermes-config"
 
 SECRET_DATASET_DIR = Path(os.environ.get(
     "SECRET_DATASET_DIR", "/kaggle/input/hermes-secret-store"
@@ -93,52 +95,66 @@ ClientAliveCountMax 2
                             stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
 def restore_runtime():
-    """Restore non-secret Hermes state from the read-only runtime Dataset."""
+    """Restore the prebuilt Hermes installation bundle, if the Dataset has one."""
     home = Path("/home/sandbox")
-    target = home / ".hermes"
-    if not RUNTIME_HOME_DIR.is_dir():
-        log(f"No runtime snapshot found at {RUNTIME_HOME_DIR}; starting clean")
-        return
-    target.mkdir(parents=True, exist_ok=True)
-    for item in RUNTIME_HOME_DIR.iterdir():
-        if item.name in {".env", "auth.json", "credentials.json", "tokens.json"}:
-            log(f"Skipping sensitive runtime item: {item.name}")
-            continue
-        destination = target / item.name
-        if item.is_dir():
-            shutil.copytree(item, destination, dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns(".env", "*.pem", "*.key", "*.token", "credentials*"))
-        elif item.is_file():
-            shutil.copy2(item, destination)
+    if not RUNTIME_BUNDLE.is_file():
+        log("No prebuilt runtime bundle found; doing one-time online bootstrap")
+        return False
+    log(f"Restoring prebuilt Hermes runtime from {RUNTIME_BUNDLE}")
+    with tarfile.open(RUNTIME_BUNDLE, "r:gz") as archive:
+        base = home.resolve()
+        for member in archive.getmembers():
+            destination = (home / member.name).resolve()
+            if destination != base and base not in destination.parents:
+                raise RuntimeError("Unsafe path in Hermes runtime archive")
+        archive.extractall(home)
     account = pwd.getpwnam("sandbox")
-    for root, dirs, files in os.walk(target):
+    for root, dirs, files in os.walk(home):
         os.chown(root, account.pw_uid, account.pw_gid)
         for name in dirs + files:
             os.chown(os.path.join(root, name), account.pw_uid, account.pw_gid)
-    log("Restored non-secret Hermes state from runtime Dataset")
+    launcher = home / ".local/bin/hermes"
+    source = home / ".hermes/hermes-agent"
+    if not launcher.exists() or not source.is_dir():
+        raise RuntimeError("Runtime archive is incomplete: expected .local/bin/hermes and .hermes/hermes-agent")
+    log("Prebuilt Hermes source, launcher and managed runtime restored")
+    return True
+
+def restore_secret_config():
+    """Copy personal Hermes config and credentials from the private secret Dataset."""
+    target = Path("/home/sandbox/.hermes")
+    if not SECRET_CONFIG_DIR.is_dir():
+        log("No hermes-config folder in secret Dataset; keeping default Hermes config")
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    for item in SECRET_CONFIG_DIR.iterdir():
+        if item.is_file() and item.name in {"config.yaml", ".env"}:
+            destination = target / item.name
+            shutil.copy2(item, destination)
+            os.chmod(destination, 0o600)
+    account = pwd.getpwnam("sandbox")
+    for name in ("config.yaml", ".env"):
+        path = target / name
+        if path.exists():
+            os.chown(path, account.pw_uid, account.pw_gid)
+    log("Hermes config and credentials restored from private secret Dataset")
 
 def export_runtime():
-    """Export a reviewable snapshot; Kaggle input Datasets are read-only."""
-    source = Path("/home/sandbox/.hermes")
-    output = Path("/kaggle/working/hermes-runtime-export") / "hermes"
-    if not source.is_dir():
-        log("No ~/.hermes directory to export")
+    """Export installed Hermes code and managed tools, excluding personal config."""
+    home = Path("/home/sandbox")
+    output_dir = Path("/kaggle/working/hermes-runtime-export")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = output_dir / "hermes-runtime.tar.gz"
+    include = [home / ".local", home / ".cache", home / ".hermes/hermes-agent"]
+    available = [path for path in include if path.exists()]
+    if not (home / ".local/bin/hermes").exists() or not (home / ".hermes/hermes-agent").is_dir():
+        log("Runtime export skipped: Hermes installation is incomplete")
         return
-    if output.parent.exists():
-        shutil.rmtree(output.parent)
-    output.mkdir(parents=True, exist_ok=True)
-    for item in source.iterdir():
-        if item.name in {".env", "auth.json", "credentials.json", "tokens.json"}:
-            log(f"Excluded sensitive runtime item from export: {item.name}")
-            continue
-        destination = output / item.name
-        if item.is_dir():
-            shutil.copytree(item, destination, ignore=shutil.ignore_patterns(
-                ".env", "*.pem", "*.key", "*.token", "credentials*"))
-        elif item.is_file():
-            shutil.copy2(item, destination)
-    log(f"Runtime snapshot exported to {output.parent}; inspect before uploading a new Dataset version")
-
+    with tarfile.open(archive_path, "w:gz") as archive:
+        for path in available:
+            archive.add(path, arcname=str(path.relative_to(home)), recursive=True)
+    log(f"Prebuilt runtime bundle exported to {archive_path}")
+    log("Upload hermes-runtime.tar.gz as a new version of the private hermes-runtime Dataset")
 def install_hermes():
     home = Path("/home/sandbox")
     marker = home / ".hermes" / "config.yaml"
@@ -189,9 +205,11 @@ def poll_stop(since):
 
 def main():
     ensure_packages()
-    restore_runtime()
+    restored = restore_runtime()
+    if not restored:
+        install_hermes()
+    restore_secret_config()
     sshd = configure_ssh()
-    install_hermes()
     since = int(time.time())
     log(f"Starting Pinggy reverse SSH tunnel for {PINGGY_HOST}:{REMOTE_PORT}")
     pinggy_args = [
