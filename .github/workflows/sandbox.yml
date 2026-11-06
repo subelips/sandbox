@@ -73,12 +73,15 @@ jobs:
             local note="$3"
             echo "Publishing $dataset_id from $folder"
             if kaggle datasets status "$dataset_id" >/dev/null 2>&1; then
+              echo "$dataset_id already exists; publishing a new version."
               kaggle datasets version -p "$folder" -m "$note" -q -t -r zip
             else
+              # Kaggle creates Datasets asynchronously. Do not immediately call
+              # GetDatasetStatus: it can return 403 while the new Dataset is provisioning.
               # Kaggle Datasets are private by default; do not pass --public.
               kaggle datasets create -p "$folder" -q -t -r zip
+              echo "Create request accepted for $dataset_id; provisioning may take a short time."
             fi
-            kaggle datasets status "$dataset_id"
           }
           publish_dataset datasets/package-cache maithanhtu/sandbox-package-cache "Initialize private package cache"
           publish_dataset datasets/secret-store maithanhtu/sandbox-secret-store "Initialize private secret store seed"
