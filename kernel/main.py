@@ -110,6 +110,11 @@ def restore_runtime():
                             ignore=shutil.ignore_patterns(".env", "*.pem", "*.key", "*.token", "credentials*"))
         elif item.is_file():
             shutil.copy2(item, destination)
+    account = pwd.getpwnam("sandbox")
+    for root, dirs, files in os.walk(target):
+        os.chown(root, account.pw_uid, account.pw_gid)
+        for name in dirs + files:
+            os.chown(os.path.join(root, name), account.pw_uid, account.pw_gid)
     log("Restored non-secret Hermes state from runtime Dataset")
 
 def export_runtime():
