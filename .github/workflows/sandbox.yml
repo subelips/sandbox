@@ -83,11 +83,12 @@ jobs:
             else
               echo "STATUS CHECK FAILED for $dataset_id:"
               printf '%s\n' "$status_output"
-              echo "Searching Kaggle for matching Runtime datasets; refusing blind creation."
-              kaggle datasets list -s "maithanhtu-sandbox-runtime-bundle-20261106" -v 2>&1 || true
-              kaggle datasets list -s "sandbox-runtime" -v 2>&1 || true
-              echo "Resolve the existing Dataset or status-access issue before creating anything."
-              return 1
+              echo "No accessible Dataset found by status. Attempting Dataset creation using the current metadata title."
+              if ! output="$(kaggle datasets create -p "$folder" -r zip 2>&1)"; then
+                printf '%s\n' "$output"
+                echo "Dataset creation failed for $dataset_id. Check the Kaggle error above; do not retry with random titles."
+                return 1
+              fi
             fi
             printf '%s\n' "$output"
             if printf '%s' "$output" | grep -Eiq 'Dataset creation error|Dataset version creation error|Client Error|Traceback'; then
