@@ -9,9 +9,9 @@
   "enable_internet": "true",
   "machine_shape": "",
   "dataset_sources": [
-    "maithanhtu/hermes-package-cache",
-    "maithanhtu/hermes-secret-store",
-    "maithanhtu/hermes-runtime"
+    "maithanhtu/sandbox-package-cache",
+    "maithanhtu/sandbox-secret-store",
+    "maithanhtu/sandbox-runtime"
   ],
   "competition_sources": [],
   "kernel_sources": [],
