@@ -1,0 +1,10 @@
+{
+  "title": "Sandbox Package Cache",
+  "id": "maithanhtu/sandbox-package-cache",
+  "licenses": [
+    {
+      "name": "unknown"
+    }
+  ],
+  "description": "Private offline package archive cache for the Hermes Kaggle sandbox."
+}
