@@ -3,12 +3,16 @@
 import json
 import os
 import pwd
+import shutil
 import subprocess
 import sys
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+RUNTIME_DATASET_DIR = Path(os.environ.get("RUNTIME_DATASET_DIR", "/kaggle/input/hermes-runtime"))
+RUNTIME_HOME_DIR = RUNTIME_DATASET_DIR / "hermes"
 
 SECRET_DATASET_DIR = Path(os.environ.get(
     "SECRET_DATASET_DIR", "/kaggle/input/hermes-secret-store"
@@ -88,6 +92,47 @@ ClientAliveCountMax 2
     return subprocess.Popen(["/usr/sbin/sshd", "-D", "-e"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
+def restore_runtime():
+    """Restore non-secret Hermes state from the read-only runtime Dataset."""
+    home = Path("/home/sandbox")
+    target = home / ".hermes"
+    if not RUNTIME_HOME_DIR.is_dir():
+        log(f"No runtime snapshot found at {RUNTIME_HOME_DIR}; starting clean")
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    for item in RUNTIME_HOME_DIR.iterdir():
+        if item.name in {".env", "auth.json", "credentials.json", "tokens.json"}:
+            log(f"Skipping sensitive runtime item: {item.name}")
+            continue
+        destination = target / item.name
+        if item.is_dir():
+            shutil.copytree(item, destination, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns(".env", "*.pem", "*.key", "*.token", "credentials*"))
+        elif item.is_file():
+            shutil.copy2(item, destination)
+    log("Restored non-secret Hermes state from runtime Dataset")
+
+def export_runtime():
+    """Export a reviewable snapshot; Kaggle input Datasets are read-only."""
+    source = Path("/home/sandbox/.hermes")
+    output = Path("/kaggle/working/hermes-runtime-export") / "hermes"
+    if not source.is_dir():
+        log("No ~/.hermes directory to export")
+        return
+    if output.parent.exists():
+        shutil.rmtree(output.parent)
+    output.mkdir(parents=True, exist_ok=True)
+    for item in source.iterdir():
+        if item.name in {".env", "auth.json", "credentials.json", "tokens.json"}:
+            log(f"Excluded sensitive runtime item from export: {item.name}")
+            continue
+        destination = output / item.name
+        if item.is_dir():
+            shutil.copytree(item, destination, ignore=shutil.ignore_patterns(
+                ".env", "*.pem", "*.key", "*.token", "credentials*"))
+        elif item.is_file():
+            shutil.copy2(item, destination)
+    log(f"Runtime snapshot exported to {output.parent}; inspect before uploading a new Dataset version")
 def install_hermes():
     home = Path("/home/sandbox")
     marker = home / ".hermes" / "config.yaml"
@@ -138,6 +183,7 @@ def poll_stop(since):
 
 def main():
     ensure_packages()
+    restore_runtime()
     sshd = configure_ssh()
     install_hermes()
     since = int(time.time())
@@ -173,6 +219,7 @@ def main():
                     proc.wait(timeout=8)
                 except subprocess.TimeoutExpired:
                     proc.kill()
+        export_runtime()
         log("Sandbox stopped")
 
 if __name__ == "__main__":
