@@ -1,0 +1,78 @@
+name: Kaggle Sandbox
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Choose sandbox action"
+        required: true
+        type: choice
+        options:
+          - START
+          - STOP
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kaggle-sandbox-control
+  cancel-in-progress: false
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          set -euo pipefail
+          test -n "$NTFY_TOPIC" || { echo "Missing Actions Secret NTFY_TOPIC"; exit 1; }
+          if [ "$ACTION" = "START" ]; then
+            test -n "$KAGGLE_USERNAME" || { echo "Missing Actions Secret KAGGLE_USERNAME"; exit 1; }
+            test -n "$KAGGLE_KEY" || { echo "Missing Actions Secret KAGGLE_KEY"; exit 1; }
+          fi
+
+      - name: Send cooperative STOP signal
+        if: ${{ inputs.action == 'STOP' }}
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 20 \
+            -H "Content-Type: text/plain" \
+            --data-binary "STOP" \
+            "https://ntfy.sh/${NTFY_TOPIC}"
+          echo "STOP signal published. Kaggle will exit when its polling loop receives it."
+
+      - name: Configure Kaggle credentials
+        if: ${{ inputs.action == 'START' }}
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.kaggle"
+          python - <<'PY'
+          import json, os
+          path = os.path.expanduser("~/.kaggle/kaggle.json")
+          with open(path, "w", encoding="utf-8") as f:
+              json.dump({"username": os.environ["KAGGLE_USERNAME"],
+                         "key": os.environ["KAGGLE_KEY"]}, f)
+          os.chmod(path, 0o600)
+          PY
+          python -m pip install --quiet --upgrade kaggle
+
+      - name: Push and start Kaggle kernel
+        if: ${{ inputs.action == 'START' }}
+        run: |
+          set -euo pipefail
+          kaggle kernels push -p kernel --timeout 43200
