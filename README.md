@@ -1,6 +1,6 @@
 # Hermes Kaggle Sandbox (iPhone + Termius + Pinggy Pro)
 
-One fixed Kaggle script kernel is controlled by one GitHub Actions workflow with START / STOP. The kernel mounts three separate private Kaggle Datasets.
+One fixed Kaggle script kernel is controlled by one GitHub Actions workflow with START / STOP. The kernel mounts three separate private Kaggle Datasets: a prebuilt Hermes runtime, a package cache, and a secret/configuration store.
 
 - GitHub repository: subelips/sandbox
 - Current kernel metadata ID: maithanhtu/sandbox
@@ -20,7 +20,7 @@ Create both datasets from the Kaggle mobile website. Keep them **Private**.
 - Owner: `maithanhtu`
 - Dataset URL: `maithanhtu/hermes-package-cache`
 
-This dataset is reserved for Hermes source/runtime dependency archives and the `.pkg` cache. The current bootstrap attaches this dataset, but does not yet consume a package archive; installation still uses the official Hermes installer over the internet. Do not upload credentials here.
+This Dataset is for downloaded dependency archives and package caches with the `.pkg` suffix (plus wheels or other offline package files). It is separate from the Hermes source/runtime bundle. Do not upload credentials here. The current bootstrap does not yet directly consume every possible `.pkg` format; package-cache integration must match the actual archive format and Hermes PM cache layout.
 
 ### Dataset B — secrets store
 
@@ -45,24 +45,36 @@ Upload exactly one file at the dataset root named `secrets.json` with this struc
 The Notebook reads this file directly from:
 `/kaggle/input/hermes-secret-store/secrets.json`
 
-It does **not** use Kaggle Secrets. Never put the actual contents of `secrets.json` in GitHub, a public dataset, or a ChatGPT message. Keep the Dataset private and limit access to your own account. Anyone who can access this private Dataset or the running kernel may be able to obtain its secrets; private does not mean encrypted.
+Also place personal Hermes configuration in a folder named `hermes-config/` at the Dataset root. Put `config.yaml` and `.env` inside it:
 
-### Dataset C — Hermes runtime state
+```
+hermes-secret-store/
+  secrets.json
+  hermes-config/
+    config.yaml
+    .env
+```
+
+At boot, the Notebook copies `hermes-config/config.yaml` and `hermes-config/.env` into `/home/sandbox/.hermes/` with restrictive file permissions. Keep all model-provider API keys, OAuth tokens, and personal Hermes configuration in this private Dataset. It does **not** use Kaggle Secrets. Never put the actual contents of `secrets.json` in GitHub, a public dataset, or a ChatGPT message. Keep the Dataset private and limit access to your own account. Anyone who can access this private Dataset or the running kernel may be able to obtain its secrets; private does not mean encrypted.
+
+### Dataset C — Hermes Runtime (complete installation bundle)
 
 - Title: Hermes Runtime
 - Slug: `hermes-runtime`
 - Owner: `maithanhtu`
 - Dataset URL: `maithanhtu/hermes-runtime`
 
-Create this Dataset as **Private**. Its root should contain a folder named `hermes/`. Put the non-secret Hermes state you want restored inside that folder, for example selected memory, custom skills, and other reviewed configuration/state files.
+This Dataset is **not** for chat history or personal configuration. It is the offline installation bundle: the Hermes Agent source tree, launcher, managed Python environment, PM-managed tools, and downloaded runtime assets produced by the initial successful install.
 
-At startup, the Notebook copies files from `/kaggle/input/hermes-runtime/hermes/` into `/home/sandbox/.hermes/`. At cooperative STOP, it exports a review copy to:
+The expected file at the Dataset root is:
 
-`/kaggle/working/hermes-runtime-export/hermes/`
+```
+hermes-runtime.tar.gz
+```
 
-Kaggle input Datasets are read-only. The Notebook cannot update Dataset C in place. After a session, download the exported folder from the Kaggle kernel output, review it, remove anything sensitive, then upload it as a **new version** of `hermes-runtime` using Kaggle's Dataset versioning UI.
+The Notebook restores this archive into `/home/sandbox`. On the first boot, if the archive does not exist yet, it performs the official online Hermes installation once. On a normal cooperative STOP, it exports `/kaggle/working/hermes-runtime-export/hermes-runtime.tar.gz`. Download that archive from the Kaggle Kernel output and upload it as a new version of the private `hermes-runtime` Dataset. Future starts restore the prebuilt bundle rather than rerunning the Hermes installer and downloading its managed runtime again.
 
-The export deliberately excludes common secret files such as `.env`, `auth.json`, credential/token files, private keys, and PEM files. This is a safety filter, not a guarantee that every secret is removed: inspect files such as `config.yaml` before uploading. Keep API keys and login tokens in Dataset B, not Dataset C.
+The archive includes `~/.local`, `~/.cache`, and `~/.hermes/hermes-agent`. It deliberately excludes personal Hermes config and credentials; those belong in Dataset B. This bundle is tied to the Kaggle Linux architecture and compatible system libraries. A change in Hermes version, Python/Node runtime, or Kaggle base image may require rebuilding it. Some optional integrations may still download their own components when first used.
 
 ## 2. Attach the datasets to the fixed kernel
 
@@ -115,8 +127,8 @@ To stop, run the same GitHub Actions workflow and choose **STOP**. The running k
 
 - Kaggle is an ephemeral runtime, not a guaranteed 24/7 VPS. Kaggle can stop sessions due to runtime limits, quotas, inactivity, or platform policy.
 - STOP is cooperative, not an instant hard-stop API.
-- The runtime Dataset restores reviewed non-secret files into `~/.hermes` and exports a snapshot on cooperative STOP. Updating the Dataset is a manual review-and-upload step; abrupt Kaggle termination may prevent export. Secrets and credentials are excluded and must remain in Dataset B.
-- The package-cache Dataset is attached but its `.pkg` archive is not yet wired into the installer.
+- The runtime Dataset restores the prebuilt Hermes installation bundle. The first build still needs internet; subsequent boots can restore the bundle offline. The exported bundle is produced only on cooperative STOP, so abrupt termination can prevent export.
+- The package-cache Dataset is attached; its exact `.pkg` format still needs to be wired to the matching Hermes package-manager cache.
 - Use a long random ntfy topic. Anyone who knows it can send control messages.
 - The Pinggy TCP endpoint is reachable over the internet. Use a strong unique SSH password and rotate credentials if they are ever exposed.
 - The SSH configuration disables root login, public-key login, X11 forwarding, agent forwarding, and SSH TCP forwarding.
@@ -125,4 +137,4 @@ To stop, run the same GitHub Actions workflow and choose **STOP**. The running k
 
 - `.github/workflows/sandbox.yml`: one START / STOP workflow.
 - `kernel/kernel-metadata.json`: fixed Kaggle kernel metadata and dataset attachments.
-- `kernel/main.py`: direct Dataset secret loading, runtime restore/export, SSH setup, Hermes installation, Pinggy tunnel, and ntfy STOP polling.
+- `kernel/main.py`: direct Dataset secret/config loading, offline runtime restore/export, SSH setup, Hermes installation, Pinggy tunnel, and ntfy STOP polling.
