@@ -72,20 +72,22 @@ jobs:
             local dataset_id="$2"
             local note="$3"
             local output=""
+            local status_output=""
             echo "Publishing $dataset_id from $folder"
-            if kaggle datasets status "$dataset_id" >/dev/null 2>&1; then
+            if status_output="$(kaggle datasets status "$dataset_id" 2>&1)"; then
               echo "$dataset_id already exists; publishing a new version."
               if ! output="$(kaggle datasets version -p "$folder" -m "$note" -q -t -r zip 2>&1)"; then
                 printf '%s\n' "$output"
                 return 1
               fi
             else
-              # Dataset creation is asynchronous. Capture CLI output because some
-              # Kaggle CLI errors may be printed without a failing shell exit code.
-              if ! output="$(kaggle datasets create -p "$folder" -q -t -r zip 2>&1)"; then
-                printf '%s\n' "$output"
-                return 1
-              fi
+              echo "STATUS CHECK FAILED for $dataset_id:"
+              printf '%s\n' "$status_output"
+              echo "Searching Kaggle for matching Runtime datasets; refusing blind creation."
+              kaggle datasets list -s "maithanhtu-sandbox-runtime-bundle-20261106" -v 2>&1 || true
+              kaggle datasets list -s "sandbox-runtime" -v 2>&1 || true
+              echo "Resolve the existing Dataset or status-access issue before creating anything."
+              return 1
             fi
             printf '%s\n' "$output"
             if printf '%s' "$output" | grep -Eiq 'Dataset creation error|Dataset version creation error|Client Error|Traceback'; then
