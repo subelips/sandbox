@@ -80,10 +80,15 @@ def install_hermes():
     env = os.environ.copy()
     env.update({"HOME": str(home), "USER": "sandbox", "LOGNAME": "sandbox",
                 "PATH": f"{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"})
+    account = pwd.getpwnam("sandbox")
+    def demote_to_sandbox():
+        os.initgroups("sandbox", account.pw_gid)
+        os.setgid(account.pw_gid)
+        os.setuid(account.pw_uid)
     installer = subprocess.Popen(
         ["bash", "-lc", "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"],
         cwd=str(home), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, preexec_fn=lambda: os.setuid(pwd.getpwnam("sandbox").pw_uid))
+        text=True, preexec_fn=demote_to_sandbox)
     for line in installer.stdout:
         log("Hermes installer: " + line.rstrip()[-400:])
     if installer.wait() != 0:
