@@ -29,7 +29,7 @@ This Dataset is for downloaded dependency archives and package caches with the `
 - Owner: `maithanhtu`
 - Dataset URL: `maithanhtu/hermes-secret-store`
 
-Upload exactly one file at the dataset root named `secrets.json` with this structure (replace every placeholder on your iPhone before uploading):
+At the Dataset root, upload `secrets.json` with this structure (replace every placeholder on your iPhone before uploading), and create the `hermes-config/` folder described below:
 
 ```json
 {
