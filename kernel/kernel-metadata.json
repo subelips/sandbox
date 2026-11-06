@@ -8,7 +8,10 @@
   "enable_gpu": "false",
   "enable_internet": "true",
   "machine_shape": "",
-  "dataset_sources": [],
+  "dataset_sources": [
+    "maithanhtu/hermes-package-cache",
+    "maithanhtu/hermes-secret-store"
+  ],
   "competition_sources": [],
   "kernel_sources": [],
   "model_sources": []
