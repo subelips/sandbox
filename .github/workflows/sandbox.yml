@@ -93,7 +93,7 @@ jobs:
           metadata["title"] = f"Hermes Runtime Bundle {run_id}"
           with open(path, "w", encoding="utf-8") as f:
               json.dump(metadata, f, ensure_ascii=False, indent=2)
-              f.write("\\n")
+              f.write("\n")
           print(f"Runtime Dataset title for this run: {metadata['title']}")
           PY
               fi
