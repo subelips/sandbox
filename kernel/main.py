@@ -65,7 +65,7 @@ def configure_ssh():
         pwd.getpwnam("sandbox")
     except KeyError:
         run(["useradd", "--create-home", "--shell", "/bin/bash", "sandbox"])
-    run(["chpasswd"], input=f"sandbox:{SSH_PASSWORD}\\n", text=True)
+    run(["chpasswd"], input=f"sandbox:{SSH_PASSWORD}\n", text=True)
     ssh_config = """Port 22
 AddressFamily inet
 ListenAddress 0.0.0.0
