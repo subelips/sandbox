@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kaggle sandbox entrypoint. Credentials are read only from Kaggle Secrets."""
+"""Kaggle sandbox entrypoint. Secrets are read directly from the private Kaggle Dataset."""
 import json
 import os
 import pwd
@@ -10,25 +10,42 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+SECRET_DATASET_DIR = Path(os.environ.get(
+    "SECRET_DATASET_DIR", "/kaggle/input/hermes-secret-store"
+))
+SECRET_FILE = Path(os.environ.get(
+    "SECRET_FILE", str(SECRET_DATASET_DIR / "secrets.json")
+))
+
 def log(message):
     print(f"[sandbox] {message}", flush=True)
 
-def secret(name):
+def load_dataset_secrets():
+    if not SECRET_FILE.is_file():
+        raise RuntimeError(
+            f"Secret file not found: {SECRET_FILE}. Attach the private "
+            "hermes-secret-store Dataset and include secrets.json."
+        )
     try:
-        from kaggle_secrets import UserSecretsClient
-        value = UserSecretsClient().get_secret(name)
+        data = json.loads(SECRET_FILE.read_text(encoding="utf-8"))
     except Exception as exc:
-        raise RuntimeError(f"Missing or unreadable Kaggle Secret: {name}") from exc
-    if not value:
-        raise RuntimeError(f"Kaggle Secret is empty: {name}")
-    return value.strip()
+        raise RuntimeError("Cannot parse Dataset secrets.json") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("secrets.json must contain a JSON object")
+    required = ("PINGGY_TOKEN", "SSH_PASSWORD", "NTFY_TOPIC")
+    missing = [key for key in required if not str(data.get(key, "")).strip()]
+    if missing:
+        raise RuntimeError("Missing required keys in Dataset secrets.json: " + ", ".join(missing))
+    # Keep secret values in memory only; never print them.
+    return {key: str(value).strip() for key, value in data.items()}
 
-PINGGY_TOKEN = secret("PINGGY_TOKEN")
-SSH_PASSWORD = secret("SSH_PASSWORD")
-NTFY_TOPIC = secret("NTFY_TOPIC")
-REMOTE_PORT = os.environ.get("PINGGY_REMOTE_PORT", "19326")
-PINGGY_HOST = os.environ.get("PINGGY_HOST", "sandboxx.a.pinggy.link")
-PINGGY_GATEWAY = os.environ.get("PINGGY_GATEWAY", "pro.pinggy.io")
+SECRETS = load_dataset_secrets()
+PINGGY_TOKEN = SECRETS["PINGGY_TOKEN"]
+SSH_PASSWORD = SECRETS["SSH_PASSWORD"]
+NTFY_TOPIC = SECRETS["NTFY_TOPIC"]
+REMOTE_PORT = str(SECRETS.get("PINGGY_REMOTE_PORT", "19326")).strip()
+PINGGY_HOST = str(SECRETS.get("PINGGY_HOST", "sandboxx.a.pinggy.link")).strip()
+PINGGY_GATEWAY = str(SECRETS.get("PINGGY_GATEWAY", "pro.pinggy.io")).strip()
 
 if not REMOTE_PORT.isdigit() or not (1024 <= int(REMOTE_PORT) <= 65535):
     raise RuntimeError("PINGGY_REMOTE_PORT must be a valid TCP port")
@@ -48,7 +65,7 @@ def configure_ssh():
         pwd.getpwnam("sandbox")
     except KeyError:
         run(["useradd", "--create-home", "--shell", "/bin/bash", "sandbox"])
-    run(["chpasswd"], input=f"sandbox:{SSH_PASSWORD}\n", text=True)
+    run(["chpasswd"], input=f"sandbox:{SSH_PASSWORD}\\n", text=True)
     ssh_config = """Port 22
 AddressFamily inet
 ListenAddress 0.0.0.0
@@ -68,7 +85,8 @@ ClientAliveCountMax 2
 """
     Path("/etc/ssh/sshd_config.d/90-kaggle-sandbox.conf").write_text(ssh_config)
     run(["/usr/sbin/sshd", "-t"])
-    return subprocess.Popen(["/usr/sbin/sshd", "-D", "-e"], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    return subprocess.Popen(["/usr/sbin/sshd", "-D", "-e"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
 def install_hermes():
     home = Path("/home/sandbox")
@@ -124,7 +142,6 @@ def main():
     install_hermes()
     since = int(time.time())
     log(f"Starting Pinggy reverse SSH tunnel for {PINGGY_HOST}:{REMOTE_PORT}")
-    log("Expected Termius endpoint uses the reserved Pinggy hostname and port.")
     pinggy_args = [
         "ssh", "-p", "443", "-N", "-T",
         "-o", "ServerAliveInterval=30",
@@ -137,7 +154,7 @@ def main():
     tunnel = subprocess.Popen(pinggy_args, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     try:
         publish(f"STARTED {PINGGY_HOST}:{REMOTE_PORT}")
-        log("Sandbox started. Termius SSH user: sandbox")
+        log(f"Sandbox started. SSH user: sandbox; host: {PINGGY_HOST}; port: {REMOTE_PORT}")
         while True:
             if sshd.poll() is not None:
                 raise RuntimeError("sshd exited unexpectedly")
