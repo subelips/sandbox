@@ -1,0 +1,10 @@
+{
+  "title": "Sandbox Secret Store",
+  "id": "maithanhtu/sandbox-secret-store",
+  "licenses": [
+    {
+      "name": "unknown"
+    }
+  ],
+  "description": "Private Hermes Agent configuration and credentials for the Kaggle sandbox."
+}
