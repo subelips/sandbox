@@ -71,22 +71,33 @@ jobs:
             local folder="$1"
             local dataset_id="$2"
             local note="$3"
+            local output=""
             echo "Publishing $dataset_id from $folder"
             if kaggle datasets status "$dataset_id" >/dev/null 2>&1; then
               echo "$dataset_id already exists; publishing a new version."
-              kaggle datasets version -p "$folder" -m "$note" -q -t -r zip
+              if ! output="$(kaggle datasets version -p "$folder" -m "$note" -q -t -r zip 2>&1)"; then
+                printf '%s\n' "$output"
+                return 1
+              fi
             else
-              # Kaggle creates Datasets asynchronously. Do not immediately call
-              # GetDatasetStatus: it can return 403 while the new Dataset is provisioning.
-              # Kaggle Datasets are private by default; do not pass --public.
-              kaggle datasets create -p "$folder" -q -t -r zip
-              echo "Create request accepted for $dataset_id; provisioning may take a short time."
+              # Dataset creation is asynchronous. Capture CLI output because some
+              # Kaggle CLI errors may be printed without a failing shell exit code.
+              if ! output="$(kaggle datasets create -p "$folder" -q -t -r zip 2>&1)"; then
+                printf '%s\n' "$output"
+                return 1
+              fi
             fi
+            printf '%s\n' "$output"
+            if printf '%s' "$output" | grep -Eiq 'Dataset creation error|Dataset version creation error|Client Error|Traceback'; then
+              echo "Kaggle reported an error while publishing $dataset_id."
+              return 1
+            fi
+            echo "Kaggle accepted the publish request for $dataset_id."
           }
           publish_dataset datasets/package-cache maithanhtu/sandbox-package-cache "Initialize private package cache"
           publish_dataset datasets/secret-store maithanhtu/sandbox-secret-store "Initialize private secret store seed"
           publish_dataset datasets/runtime maithanhtu/sandbox-runtime "Initialize private Hermes runtime seed"
-          echo "All three Datasets have been created or updated as private Datasets."
+          echo "All three Dataset publish requests were accepted."
 
       - name: Send cooperative STOP signal
         if: ${{ inputs.action == 'STOP' }}
