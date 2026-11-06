@@ -1,0 +1,10 @@
+{
+  "title": "Sandbox Hermes Runtime",
+  "id": "maithanhtu/sandbox-runtime",
+  "licenses": [
+    {
+      "name": "unknown"
+    }
+  ],
+  "description": "Private prebuilt Hermes Agent source and managed runtime bundle."
+}
