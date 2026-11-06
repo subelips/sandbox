@@ -83,7 +83,20 @@ jobs:
             else
               echo "STATUS CHECK FAILED for $dataset_id:"
               printf '%s\n' "$status_output"
-              echo "No accessible Dataset found by status. Attempting Dataset creation using the current metadata title."
+              echo "No accessible Dataset found by status. Creating with a unique title for this GitHub Actions run."
+              if [ "$dataset_id" = "maithanhtu/sandbox-runtime" ]; then
+                python - "$folder/dataset-metadata.json" "$GITHUB_RUN_ID" <<'PY'
+          import json, sys
+          path, run_id = sys.argv[1], sys.argv[2]
+          with open(path, "r", encoding="utf-8") as f:
+              metadata = json.load(f)
+          metadata["title"] = f"Hermes Runtime Bundle {run_id}"
+          with open(path, "w", encoding="utf-8") as f:
+              json.dump(metadata, f, ensure_ascii=False, indent=2)
+              f.write("\\n")
+          print(f"Runtime Dataset title for this run: {metadata['title']}")
+          PY
+              fi
               if ! output="$(kaggle datasets create -p "$folder" -r zip 2>&1)"; then
                 printf '%s\n' "$output"
                 echo "Dataset creation failed for $dataset_id. Check the Kaggle error above; do not retry with random titles."
